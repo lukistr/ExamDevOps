@@ -1,0 +1,130 @@
+pipeline
+{
+    agent
+    {
+        label 'docker-node'
+    }
+    stages
+    {
+		stage('Gets the project code from Gitea')
+		{
+			steps
+			{
+				git branch: 'main', url: 'http://192.168.100.202:3000/vagrant/exam'
+			}
+		}
+
+		stage('Prepare')
+		{
+			steps
+			{
+				sh 'docker network ls | grep fun-facts || docker network create fun-facts'
+			}
+		}
+
+		stage('Builds the images')
+		{
+			steps
+			{
+				sh 'cd /home/vagrant/workspace/cont/client && docker image build -t img-client .'
+				sh 'cd /home/vagrant/workspace/cont/storage && docker image build -t img-storage .'
+				sh 'cd /home/vagrant/workspace/cont/generator && docker image build -t img-generator .'
+			}
+		}
+
+		stage('Runs the application in test mode (the front-end component published on port 8080)')
+		{
+			steps
+			{
+				sh 'docker container rm -f con-client || true'
+				sh 'docker container run -d --name con-client --net fun-facts -p 8080:5000 img-client'
+				sh 'docker container rm -f con-storage || true'
+				sh 'docker container run -d --name con-storage --net fun-facts -e MYSQL_ROOT_PASSWORD="ExamPa$$w0rd" img-storage'
+				sh 'docker container rm -f con-generator || true'
+				sh 'docker container run -d --name con-generator --net fun-facts img-generator'
+			}
+		}
+
+		stage('Wait Web server start')
+        {
+            steps
+            {
+                sh '''
+                    sleep 30
+                '''
+            }
+        }
+
+		stage('Tests if the front-end is reachable (execute a simple check)')
+        {
+            steps
+            {
+                script
+                {
+                    sh'''
+                        echo 'Test #1 - Reachability'
+                        echo $(curl --write-out "%{http_code}" --silent --output /dev/null http://192.168.100.202:8080) | grep 200
+                    '''
+                }
+            }
+        }
+
+		stage('Upload images to Docker Hub')
+        {
+            steps
+            {
+                script
+                {
+                    sh'''
+                        echo "* Login to Docker Hub ..."
+						cat /vagrant/docker-hub-cred.txt | docker login --username luki88 --password-stdin
+						cd /home/vagrant/workspace/cont/client && docker image build -t luki88/img-client .
+						cd /home/vagrant/workspace/cont/storage && docker image build -t luki88/img-storage .
+						cd /home/vagrant/workspace/cont/generator && docker image build -t luki88/img-generator .
+						docker image push luki88/img-client || true
+						docker image push luki88/img-storage || true
+						docker image push luki88/img-generator || true
+                    '''
+                }
+            }
+        }
+
+		stage('Remove containers and images')
+		{
+			steps
+			{
+				sh 'docker container rm -f con-client || true'
+				sh 'docker container rm -f con-storage || true'
+				sh 'docker container rm -f con-generator || true'
+				sh 'docker image rm img-client'
+				sh 'docker image rm img-storage'
+				sh 'docker image rm img-generator'
+				sh 'docker image rm luki88/img-client'
+				sh 'docker image rm luki88/img-storage'
+				sh 'docker image rm luki88/img-generator'
+			}
+		}
+
+		
+		stage('Prepare1')
+		{
+			steps
+			{
+				sh 'docker network ls | grep exam-net || docker network create exam-net'
+			}
+		}
+
+		stage('Deploy')
+		{
+			steps
+			{
+				sh 'docker container rm -f con-client || true'
+				sh 'docker container run -d --name con-client --net exam-net -p 80:5000 luki88/img-client'
+				sh 'docker container rm -f con-storage || true'
+				sh 'docker container run -d --name con-storage --net exam-net -e MYSQL_ROOT_PASSWORD="ExamPa$$w0rd" luki88/img-storage'
+				sh 'docker container rm -f con-generator || true'
+				sh 'docker container run -d --name con-generator --net exam-net luki88/img-generator'
+			}
+		}
+    }
+}
